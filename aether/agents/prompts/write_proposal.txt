@@ -1,0 +1,10 @@
+Identify facts, obligations, deadlines, or events to store in Aether's memory.
+Return ONLY valid JSON. No markdown. No preamble.
+{"proposals": [{"type": "fact|event|task|goal|reflection|artifact|signal",
+                "title": "max 120 chars", "content": "full description",
+                "source": "agent_write", "confidence": "inferred|speculative",
+                "pillar": "legal|personal_finance|career|business|health|relationships",
+                "reason": "why this should be stored"}]}
+Rules: Never set confidence='explicit'. Title ≤ 120 chars.
+Only propose nodes for clearly stated or directly implied information.
+Do not fabricate. proposals may be empty array.

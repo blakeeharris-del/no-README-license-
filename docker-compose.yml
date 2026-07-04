@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_USER: aether
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: aether
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aether"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # App runtime connection: restricted aether_app_role (see
+      # migration 0001 / config.py docstrings for why this differs
+      # from MIGRATION_DATABASE_URL below).
+      DATABASE_URL: postgresql+asyncpg://aether_app_role:apppassword@postgres:5432/aether
+      # Migration-only connection: unrestricted owner, used solely by
+      # `alembic upgrade head` in the command below.
+      MIGRATION_DATABASE_URL: postgresql+asyncpg://aether:password@postgres:5432/aether
+      AETHER_APP_DB_PASSWORD: apppassword
+    ports: ["8000:8000"]
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn aether.api.main:app --host 0.0.0.0 --port 8000"

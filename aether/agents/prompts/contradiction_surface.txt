@@ -1,0 +1,8 @@
+Compare these two memory node contents for contradiction.
+Return ONLY valid JSON. No markdown. No preamble.
+{"conflict": "yes|no", "severity": "direct|partial|temporal",
+ "description": "One sentence, or empty string if no conflict."}
+severity: direct=mutually exclusive facts, partial=potential inconsistency,
+temporal=one may be outdated version of the other.
+Be conservative: only return "yes" for genuine conflicts. Return "no" for
+complementary statements or where one provides missing detail.

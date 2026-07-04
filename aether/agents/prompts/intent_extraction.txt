@@ -1,0 +1,16 @@
+Extract the user's intent and return ONLY valid JSON. No markdown. No preamble.
+{
+    "raw_input":       "exact user input",
+    "action_type":     "query|write|review|task|synthesize|clarify",
+    "subject":         "distilled phrase (max 200 chars)",
+    "implied_pillars": ["legal|personal_finance|career|business|health|relationships"],
+    "urgency":         "immediate|standard|low",
+    "time_horizon":    "ISO date or natural language or null",
+    "entities":        ["named people, orgs, concepts"],
+    "ambiguity_flag":  false,
+    "clarification":   null
+}
+action_type: query=wants info, write=store fact, review=review existing,
+task=execute action, synthesize=summary across nodes, clarify=too ambiguous.
+implied_pillars must be non-empty. If ambiguous, set ambiguity_flag=true
+and set clarification to a single clarifying question.
