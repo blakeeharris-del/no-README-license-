@@ -255,6 +255,18 @@ async def close_session(session_id: UUID, db: AsyncSession = Depends(get_db)) ->
     if nodes_since_last >= settings.synthesis_threshold_nodes:
         await run_synthesis("threshold", db)
 
+    # STEP 5 (§16.4 session close): emit session.closed -> Reflection Loop.
+    # run() is fail-safe (never raises); the extra guard here ensures that
+    # even an unexpected construction error cannot block the close response
+    # or, by extension, the next session opening (EC-21).
+    try:
+        from aether.loops.reflection_loop import ReflectionLoop
+
+        await ReflectionLoop().run(session_id, db, trigger="session.closed")
+        await db.commit()
+    except Exception:  # pragma: no cover - defensive; run() already guards
+        logger.exception("Reflection Loop trigger failed for session %s (non-blocking)", session_id)
+
     return {
         "summary": summary_text,
         "nodes_written_total": nodes_written_total,

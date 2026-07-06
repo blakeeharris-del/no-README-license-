@@ -21,10 +21,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aether.config import settings
 from aether.invariants.guards import (
     SkillExecutionError,
+    SkillNotActiveError,
     SkillNotFoundError,
     SkillTimeoutError,
     compute_hash,
 )
+from aether.models.enums import SkillStatus
+from aether.models.runtime import Skill as SkillModel
 from aether.models.runtime import SkillInvocationLog
 from aether.schemas.skills import SkillResult
 
@@ -65,6 +68,25 @@ async def invoke_skill(
     if skill_fn is None:
         await _update_log(db, log_id, status="error", error_detail="skill_not_found")
         raise SkillNotFoundError(skill_name)
+
+    # ---- STEP 3b: Active-status gate [Foundation §10.7.1] ----------------
+    # "No skill may be invoked unless it is Active." The skills table is
+    # the lifecycle system of record (Impl Plan §8.3); a skill is
+    # invocable only if it has an Active row there. Safety skills bypass
+    # invoke_skill entirely, so this gate only governs registry-dispatched
+    # skills.
+    statuses = [
+        r[0]
+        for r in (
+            await db.execute(
+                select(SkillModel.status).where(SkillModel.name == skill_name)
+            )
+        ).all()
+    ]
+    if SkillStatus.ACTIVE not in statuses:
+        current = statuses[0].value if statuses else None
+        await _update_log(db, log_id, status="error", error_detail="skill_not_active")
+        raise SkillNotActiveError(skill_name, current)
 
     # ---- STEP 4: timeout ---------------------------------------------------
     timeout_ms = SKILL_TIMEOUTS.get(skill_name, settings.default_skill_timeout_ms)

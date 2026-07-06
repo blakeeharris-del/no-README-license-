@@ -84,6 +84,13 @@ class NodeValidationError(ValueError):
     """NodeDraft failed validation in write_node() step 1."""
 
 
+class NodeNotFoundError(ValueError):
+    """A referenced node id does not exist (e.g. node_linker source/target)."""
+
+    def __init__(self, node_id):
+        super().__init__(f"Node not found: {node_id}")
+
+
 class SynthesisFromError(ValueError):
     """source='synthesis' node is missing metadata.synthesis_from."""
 
@@ -102,6 +109,20 @@ class SkillNotFoundError(RuntimeError):
 
     def __init__(self, skill_name: str):
         super().__init__(f"Skill not found in registry: {skill_name}")
+
+
+class SkillNotActiveError(RuntimeError):
+    """
+    Requested skill exists but is not at status='active' in the skills
+    table. Foundation §10.7.1: "No skill may be invoked unless it is
+    Active." Enforced by invoke_skill() after the registry lookup.
+    """
+
+    def __init__(self, skill_name: str, status: str | None):
+        super().__init__(
+            f"Skill '{skill_name}' is not Active (skills.status="
+            f"{status!r}); refusing to invoke per Foundation §10.7.1"
+        )
 
 
 class SkillTimeoutError(RuntimeError):

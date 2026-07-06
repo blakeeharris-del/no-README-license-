@@ -58,6 +58,42 @@ from aether.models.sessions import Session  # noqa: E402
 _TEST_DB_URL = os.environ["DATABASE_URL"]
 
 
+_CATALOG_SEEDED = {"done": False}
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _seed_skill_catalog():
+    """
+    Ensure the 34-skill lifecycle catalog is seeded (and committed) before
+    any test runs invoke_skill(). Phase-0 left the ``skills`` table empty;
+    the Phase-1 Active-gate (Foundation §10.7.1) now refuses to invoke any
+    skill without an Active row, so tests need the seed present.
+
+    Runs once per session (guarded), on its own short-lived engine+
+    connection so the committed rows persist independently of each test's
+    rolled-back transaction. Idempotent upsert, so re-running is harmless.
+    """
+    if not _CATALOG_SEEDED["done"]:
+        from sqlalchemy.ext.asyncio import create_async_engine as _cae
+
+        from aether.agents.sub_agents.catalog import seed_sub_agent_catalog
+        from aether.skills.catalog import seed_skill_catalog
+
+        eng = _cae(_TEST_DB_URL, poolclass=NullPool)
+        try:
+            async with eng.connect() as conn:
+                await conn.begin()
+                seed_session = AsyncSession(bind=conn, expire_on_commit=False)
+                await seed_skill_catalog(seed_session, commit=False)
+                await seed_sub_agent_catalog(seed_session, commit=False)
+                await seed_session.close()
+                await conn.commit()
+            _CATALOG_SEEDED["done"] = True
+        finally:
+            await eng.dispose()
+    yield
+
+
 @pytest.fixture
 def settings_override(monkeypatch):
     """aether_trust_stage='T0', anthropic_api_key='test-key' for all tests."""
@@ -171,6 +207,12 @@ def mock_llm_client(monkeypatch):
     )
     monkeypatch.setattr(
         "aether.skills.cognitive.contradiction_detector.AsyncAnthropic", MagicMock(return_value=mock_client)
+    )
+    # Shared Phase-1 LLM helper — single patch point for every skill that
+    # calls aether.skills._llm.call_json (synthesis_engine, decision_framer,
+    # cross_pillar_connector, and the analytical/executive skills to come).
+    monkeypatch.setattr(
+        "aether.skills._llm.AsyncAnthropic", MagicMock(return_value=mock_client)
     )
 
     class Controller:

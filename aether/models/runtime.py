@@ -40,7 +40,18 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Text, UniqueConstraint, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -55,6 +66,7 @@ from aether.models.enums import (
     PriorityClass,
     SkillCategory,
     SkillStatus,
+    SubAgentStatus,
     pg_enum,
 )
 
@@ -277,3 +289,247 @@ class PendingEscalation(Base):
             f"<PendingEscalation id={self.id} type={self.escalation_type} "
             f"priority={self.priority_class} status={self.status}>"
         )
+
+
+# =====================================================================
+# Phase-1 agent-ecosystem tables (migration 0005)
+# =====================================================================
+
+
+class SubAgent(Base):
+    """
+    TABLE: sub_agents
+
+    Registry/catalog of the 30 sub-agents (AGENT_ARCHITECTURE §5-6,
+    Missing Specs Volume 2). One row per sub-agent *definition*; a
+    single definition is invoked many times, each producing one
+    ``sub_agent_runs`` row.
+
+    ``status`` is a TEXT+CHECK column (not a native enum) per the
+    schema — the three lifecycle values are validated by the DB CHECK
+    below and, at the app layer, by the Pydantic schema.
+    """
+
+    __tablename__ = "sub_agents"
+    __table_args__ = (
+        CheckConstraint("max_duration_ms > 0", name="ck_sub_agents_duration"),
+        CheckConstraint("max_iterations > 0", name="ck_sub_agents_iterations"),
+        CheckConstraint("authority_level BETWEEN 0 AND 5", name="ck_sub_agents_authority"),
+        CheckConstraint("phase_introduced BETWEEN 0 AND 3", name="ck_sub_agents_phase"),
+        CheckConstraint(
+            "status IN ('active','deprecated','inactive')", name="ck_sub_agents_status"
+        ),
+        Index("idx_sub_agents_parent", "parent_agent"),
+        Index("idx_sub_agents_domain", "domain"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    parent_agent: Mapped[str] = mapped_column(Text, nullable=False)
+    domain: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    trigger_event: Mapped[str] = mapped_column(Text, nullable=False)
+    termination_condition: Mapped[str] = mapped_column(Text, nullable=False)
+    max_duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("60000"))
+    max_iterations: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    authority_level: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    phase_introduced: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<SubAgent name={self.name} parent={self.parent_agent} status={self.status}>"
+
+
+class SubAgentRun(Base):
+    """
+    TABLE: sub_agent_runs
+
+    One row per sub-agent invocation. Inserted at spawn with
+    status='spawned'; UPDATEd to a terminal status (or by the watchdog
+    to 'force_terminated') at completion. This — not ``action_log`` —
+    is the log EC-18 requires every sub-agent invocation to land in
+    (Foundation §10.5 Agent Communication Protocol).
+    """
+
+    __tablename__ = "sub_agent_runs"
+    __table_args__ = (
+        Index("idx_sar_session", "session_id"),
+        Index("idx_sar_sub_agent", "sub_agent_id"),
+        Index("idx_sar_status", "status"),
+        Index("idx_sar_spawned", "spawned_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    sub_agent_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("sub_agents.id"), nullable=False
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("sessions.id"), nullable=False
+    )
+    loop_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("loop_runs.id"), nullable=True
+    )
+    parent_agent: Mapped[str] = mapped_column(Text, nullable=False)
+    spawned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    terminated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[SubAgentStatus] = mapped_column(
+        pg_enum(SubAgentStatus, "sub_agent_status"),
+        nullable=False,
+        server_default=SubAgentStatus.SPAWNED.value,
+    )
+    result_summary: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    error_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<SubAgentRun id={self.id} status={self.status}>"
+
+
+class SkillChain(Base):
+    """
+    TABLE: skill_chains
+
+    Versioned catalog of named production chains (Impl Plan §8.4). The
+    five Phase-1 chains live here. ``skill_sequence`` is the ordered
+    JSONB list of {skill_name, skill_version, input_binding, required}.
+    Never hard-deleted; status='archived' is removal. ``updated_at`` is
+    maintained by the shared DB trigger, not the app.
+    """
+
+    __tablename__ = "skill_chains"
+    __table_args__ = (
+        CheckConstraint(
+            "version ~ '^[0-9]+[.][0-9]+[.][0-9]+$'", name="ck_skill_chains_version"
+        ),
+        CheckConstraint("max_length BETWEEN 1 AND 10", name="ck_skill_chains_max_length"),
+        CheckConstraint("max_duration_ms > 0", name="ck_skill_chains_duration"),
+        UniqueConstraint("name", "version", name="uq_skill_chains_name_version"),
+        Index("idx_sc_name", "name"),
+        Index("idx_sc_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[SkillStatus] = mapped_column(
+        pg_enum(SkillStatus, "skill_status"),
+        nullable=False,
+        server_default=SkillStatus.DRAFT.value,
+    )
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    skill_sequence: Mapped[list] = mapped_column(JSONB, nullable=False)
+    max_length: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("5"))
+    max_duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("30000"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<SkillChain name={self.name} v{self.version} status={self.status}>"
+
+
+class SkillPerformance(Base):
+    """
+    TABLE: skill_performance
+
+    Rolling per-skill metric windows, UPSERTed by
+    evaluative.skill_performance_tracker on
+    (skill_name, window_start, window_end). Feeds EC-20 and the
+    Meta-Loop scorecard (EC-24).
+    """
+
+    __tablename__ = "skill_performance"
+    __table_args__ = (
+        CheckConstraint("invocation_count >= 0", name="ck_sp_invocation_count"),
+        CheckConstraint("accuracy_score BETWEEN 0 AND 1", name="ck_sp_accuracy"),
+        CheckConstraint("p95_latency_ms >= 0", name="ck_sp_latency"),
+        CheckConstraint("error_rate BETWEEN 0 AND 1", name="ck_sp_error_rate"),
+        CheckConstraint("override_rate BETWEEN 0 AND 1", name="ck_sp_override_rate"),
+        UniqueConstraint("skill_name", "window_start", "window_end", name="uq_sp_window"),
+        Index("idx_sp_skill_name", "skill_name"),
+        Index(
+            "idx_sp_threshold",
+            "below_threshold",
+            postgresql_where=text("below_threshold = true"),
+        ),
+        Index("idx_sp_computed", "computed_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    skill_name: Mapped[str] = mapped_column(Text, nullable=False)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    invocation_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    accuracy_score: Mapped[Optional[float]] = mapped_column(Numeric(5, 4), nullable=True)
+    p95_latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error_rate: Mapped[Optional[float]] = mapped_column(Numeric(5, 4), nullable=True)
+    override_rate: Mapped[Optional[float]] = mapped_column(Numeric(5, 4), nullable=True)
+    below_threshold: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<SkillPerformance skill={self.skill_name} below_threshold={self.below_threshold}>"
+
+
+class MetaLoopRun(Base):
+    """
+    TABLE: meta_loop_runs
+
+    Meta-Loop health scorecards (EC-24). ``reviewed_by_user`` flips
+    false->true on user review. ``triggered_by`` is a TEXT+CHECK
+    column ('scheduled'|'manual'|'anomaly').
+    """
+
+    __tablename__ = "meta_loop_runs"
+    __table_args__ = (
+        CheckConstraint("lookback_days > 0", name="ck_mlr_lookback"),
+        CheckConstraint(
+            "triggered_by IN ('scheduled','manual','anomaly')", name="ck_mlr_triggered_by"
+        ),
+        Index("idx_mlr_run_at", "run_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    run_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    lookback_days: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("7"))
+    loop_health_scorecard: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    anomalies_detected: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    improvement_signals: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    reviewed_by_user: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    triggered_by: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'scheduled'")
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<MetaLoopRun id={self.id} run_at={self.run_at} triggered_by={self.triggered_by}>"

@@ -199,6 +199,31 @@ async def read_by_type(
     return await _to_node_summaries(list(nodes), db)
 
 
+async def read_pillar_nodes(
+    pillars: list[PillarName],
+    db: AsyncSession,
+    node_types: list[NodeType] | None = None,
+) -> list[Node]:
+    """Full ORM ``Node`` rows for ``pillars`` (INV-04 filtered), optionally
+    restricted to ``node_types``.
+
+    ``read_by_pillar`` projects to ``NodeSummary``, which deliberately
+    omits ``metadata_``. The Phase-1 analytical skills compute over that
+    metadata (asset/liability amounts, relationship tiers, deadline
+    obligation types), so they need the ORM rows. This helper reuses the
+    single INV-04 clause rather than re-deriving the filter in each skill.
+    """
+    stmt = (
+        select(Node)
+        .join(NodePillar, NodePillar.node_id == Node.id)
+        .where(NodePillar.pillar.in_(pillars), _inv04_clause())
+    )
+    if node_types:
+        stmt = stmt.where(Node.type.in_(node_types))
+    nodes = (await db.execute(stmt.distinct())).scalars().all()
+    return list(nodes)
+
+
 async def fulltext_search(
     query: str,
     pillar: PillarName,

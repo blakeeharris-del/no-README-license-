@@ -364,6 +364,25 @@ def test_inv08_assert_loop_within_bounds_raises():
 # ---------------------------------------------------------------------------
 
 
+async def _seed_active_skill(db, name: str) -> None:
+    """
+    Insert an Active ``skills`` row so invoke_skill's Active-gate
+    (Foundation §10.7.1, added in Phase-1) permits a synthetic test
+    skill to run — the same requirement a real skill must meet. Written
+    into the test's own rolled-back transaction; invoke_skill reads the
+    same AsyncSession, so it sees the row.
+    """
+    await db.execute(
+        text(
+            "INSERT INTO skills (name, category, version, status, timeout_ms) "
+            "VALUES (:n, 'operational', '1.0.0', 'active', 5000) "
+            "ON CONFLICT (name, version) DO UPDATE SET status = 'active'"
+        ),
+        {"n": name},
+    )
+    await db.flush()
+
+
 @pytest.mark.asyncio
 async def test_inv09_skill_log_written_on_success(db_session, test_session_row, monkeypatch):
     async def mock_skill(inputs, db):
@@ -371,6 +390,7 @@ async def test_inv09_skill_log_written_on_success(db_session, test_session_row, 
 
     monkeypatch.setitem(__import__("aether.skills.registry", fromlist=["SKILL_REGISTRY"]).SKILL_REGISTRY, "test.mock_skill", mock_skill)
     monkeypatch.setitem(__import__("aether.skills.registry", fromlist=["SKILL_TIMEOUTS"]).SKILL_TIMEOUTS, "test.mock_skill", 5000)
+    await _seed_active_skill(db_session, "test.mock_skill")
 
     from aether.skills.invoker import invoke_skill
     from aether.models.runtime import SkillInvocationLog
@@ -392,6 +412,7 @@ async def test_inv09_skill_log_written_on_timeout(db_session, test_session_row, 
 
     monkeypatch.setitem(__import__("aether.skills.registry", fromlist=["SKILL_REGISTRY"]).SKILL_REGISTRY, "test.slow_skill", slow_skill)
     monkeypatch.setitem(__import__("aether.skills.registry", fromlist=["SKILL_TIMEOUTS"]).SKILL_TIMEOUTS, "test.slow_skill", 100)
+    await _seed_active_skill(db_session, "test.slow_skill")
 
     from aether.skills.invoker import invoke_skill
     from aether.models.runtime import SkillInvocationLog
@@ -410,6 +431,7 @@ async def test_inv09_skill_log_written_on_error(db_session, test_session_row, mo
 
     monkeypatch.setitem(__import__("aether.skills.registry", fromlist=["SKILL_REGISTRY"]).SKILL_REGISTRY, "test.failing_skill", failing_skill)
     monkeypatch.setitem(__import__("aether.skills.registry", fromlist=["SKILL_TIMEOUTS"]).SKILL_TIMEOUTS, "test.failing_skill", 5000)
+    await _seed_active_skill(db_session, "test.failing_skill")
 
     from aether.skills.invoker import invoke_skill
     from aether.models.runtime import SkillInvocationLog

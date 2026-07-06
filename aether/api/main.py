@@ -50,6 +50,19 @@ async def lifespan(app: FastAPI):
         )
         await db.commit()
 
+        # Seed / refresh the 34-skill lifecycle catalog. Idempotent, and
+        # required for the invoke_skill() Active-gate (Foundation §10.7.1)
+        # to permit any skill to run.
+        from aether.skills.catalog import seed_skill_catalog
+
+        counts = await seed_skill_catalog(db)
+        logger.info("Skill catalog seeded: %s active, %s draft", counts["active"], counts["draft"])
+
+        from aether.agents.sub_agents.catalog import seed_sub_agent_catalog
+
+        n_sub_agents = await seed_sub_agent_catalog(db)
+        logger.info("Sub-agent catalog seeded: %s sub-agents", n_sub_agents)
+
     await LoopWatchdog.start(lambda: AsyncSessionLocal())
     logger.info("Aether Phase-0 started. Watchdog running.")
 
