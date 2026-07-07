@@ -13,12 +13,13 @@ with the transition itself logged.
 
 Storage: rather than add a table outside the Phase-1 five-table scope,
 each transition is recorded as an ``action_log`` row (the system audit
-log) tagged ``trust_maturity``. ``current_trust_stage`` derives the live
-stage from the most recent such row, falling back to the static config
-default (T0). Wiring the *dynamic* stage into the action_gateway /
-authority_checker gates (which still read the static config) is a
-Phase-2+ refinement — Phase-1 adds no live external actions, so the
-gate value is not exercised.
+log) tagged ``trust_maturity``. The live stage is derived by
+``current_trust_stage`` — which, as of Phase-2, lives in the ``memory``
+layer (``aether.memory.trust_state``) so the ``skills``-layer authority
+gates can consume it without a layering violation. It is re-exported
+here so existing ``from aether.agents.trust import current_trust_stage``
+callers keep working. The gates now read this live value (EC-35),
+closing the Phase-1 deferral where they read static config.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aether.config import settings
+from aether.memory.trust_state import TRUST_MARKER, current_trust_stage
 from aether.models.enums import (
     ActionType, AgentName, NodeStatus, SessionStatus,
 )
@@ -40,29 +41,15 @@ from aether.models.sessions import Session
 
 logger = logging.getLogger("aether.agents.trust")
 
-_MARKER = "trust_maturity"
+# Canonical live-stage reader now lives in aether.memory.trust_state and
+# is re-exported here (see module docstring). ``_MARKER`` is kept as an
+# alias of the shared constant so the transition-writer below stays in
+# sync with the reader.
+_MARKER = TRUST_MARKER
+__all__ = ["current_trust_stage", "evaluate_and_advance"]
 # Evidence thresholds for "demonstrated reliable L0-L1 operation".
 _MIN_CLEAN_SESSIONS = 3
 _MIN_OK_INVOCATIONS = 5
-
-
-async def current_trust_stage(db: AsyncSession) -> str:
-    """Live trust stage: latest logged transition, else config default."""
-    row = (
-        await db.execute(
-            select(ActionLog.output_summary)
-            .where(ActionLog.output_summary.like(f"{_MARKER}%"))
-            .order_by(ActionLog.timestamp.desc())
-            .limit(1)
-        )
-    ).first()
-    if row and row[0] and "->" in row[0]:
-        # format: "trust_maturity T0->T1: <reason>"
-        try:
-            return row[0].split("->", 1)[1].split(":", 1)[0].strip()
-        except IndexError:
-            pass
-    return settings.aether_trust_stage
 
 
 async def _reliable_l0_l1_evidence(db: AsyncSession) -> tuple[bool, str]:

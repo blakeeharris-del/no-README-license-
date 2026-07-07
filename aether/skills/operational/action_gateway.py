@@ -44,11 +44,20 @@ async def action_gateway_skill(inputs: dict, db) -> dict:
     await db.flush()
     await db.commit()
 
+    # Resolve the LIVE trust stage once (EC-35) and use it for both the
+    # authority 'confirm' gate (STEP 2) and the execution gate (STEP 4).
+    # Previously both read settings.aether_trust_stage (static config),
+    # leaving the earned stage logged-but-inert.
+    from aether.memory.trust_state import current_trust_stage
+
+    trust_stage = await current_trust_stage(db)
+
     # STEP 2: authority check.
     from aether.skills.safety.authority_checker import check_authority
 
     authority_result = check_authority(
-        requesting_agent, action_type, authority_level, db, session_id=session_id
+        requesting_agent, action_type, authority_level, db,
+        session_id=session_id, trust_stage=trust_stage,
     )
     if not authority_result["authorized"]:
         return GatewayResult(
@@ -63,10 +72,9 @@ async def action_gateway_skill(inputs: dict, db) -> dict:
             status="blocked", reason="no_approval", log_id=log_entry.id
         ).model_dump(mode="json")
 
-    # STEP 4: trust-stage gate.
-    from aether.config import settings
-
-    if settings.aether_trust_stage in ("T0", "T1"):
+    # STEP 4: trust-stage gate. Reads the LIVE stage (EC-35), not static
+    # config: below T2, execution is always mocked.
+    if trust_stage in ("T0", "T1"):
         return GatewayResult(
             status="mock_executed",
             mock_response={
@@ -77,11 +85,15 @@ async def action_gateway_skill(inputs: dict, db) -> dict:
             log_id=log_entry.id,
         ).model_dump(mode="json")
 
-    # STEP 5 (Phase-2+): connector routing. NOT implemented in Phase-0.
+    # STEP 5 (Phase-3+): connector routing. Still NOT implemented — live
+    # external execution is out of scope until Phase 3. Even at T2+ the
+    # gateway returns mock_executed; what changed in Phase-2 is that the
+    # gate now branches on the *live* trust stage, so a genuine T2/T3
+    # advance reaches this path instead of being short-circuited above.
     logger.warning(
-        "action_gateway: trust_stage=%s but no connector routing exists in Phase-0; "
+        "action_gateway: trust_stage=%s but no connector routing exists yet; "
         "returning mock_executed anyway rather than a real call",
-        settings.aether_trust_stage,
+        trust_stage,
     )
     return GatewayResult(
         status="mock_executed",

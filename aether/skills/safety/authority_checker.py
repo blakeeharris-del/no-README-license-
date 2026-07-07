@@ -33,11 +33,24 @@ _MIN_LEVEL_BY_ACTION: dict[str, int] = {
 }
 
 
-def check_authority(agent: str, action_type: str, level: int, db, session_id=None) -> dict:
+def check_authority(
+    agent: str, action_type: str, level: int, db, session_id=None, trust_stage: str | None = None
+) -> dict:
     """
     Synchronous authority check. Any exception propagates immediately
     — this function does not swallow errors, per the spec's "Cannot be
     bypassed" instruction.
+
+    ``trust_stage`` (EC-35): the *live* trust maturity stage, resolved by
+    the async caller from ``aether.memory.trust_state.current_trust_stage``
+    and passed in. This gate must stay synchronous and unbypassable, so it
+    cannot itself perform the async DB read; the caller resolves it. When
+    ``trust_stage`` is None (a rare direct sync caller with no db context),
+    it falls back to the static config default — the pre-Phase-2 behavior —
+    rather than silently authorizing. Every real caller in this codebase
+    (``action_gateway_skill``, ``check_authority_skill``) passes the live
+    value, so the ``confirm`` gate below is now driven by earned trust, not
+    static config.
 
     Deviation flagged for review: Section 15's given signature is
     ``check_authority(agent, action_type, level, db)`` with no
@@ -56,12 +69,15 @@ def check_authority(agent: str, action_type: str, level: int, db, session_id=Non
     min_level = _MIN_LEVEL_BY_ACTION.get(action_type)
     authorized = min_level is not None and level >= min_level
 
-    # 'confirm' additionally requires trust_stage >= T3.
+    # 'confirm' additionally requires trust_stage >= T3. Uses the live
+    # (dynamic) stage resolved by the caller (EC-35); falls back to the
+    # static config default only when no live value was supplied.
     if action_type == "confirm" and authorized:
         from aether.config import settings
 
+        effective_stage = trust_stage if trust_stage is not None else settings.aether_trust_stage
         trust_rank = {"T0": 0, "T1": 1, "T2": 2, "T3": 3, "T4": 4}
-        if trust_rank.get(settings.aether_trust_stage, 0) < 3:
+        if trust_rank.get(effective_stage, 0) < 3:
             authorized = False
 
     # synthesis_agent may never confirm, regardless of level/trust stage.
@@ -109,7 +125,15 @@ def _safe_agent_name(agent: str) -> AgentName:
 
 
 async def check_authority_skill(inputs: dict, db: AsyncSession) -> dict:
-    """Async wrapper for invoke_skill/SKILL_REGISTRY compatibility."""
+    """Async wrapper for invoke_skill/SKILL_REGISTRY compatibility.
+
+    Resolves the live trust stage here (async) and hands it to the
+    synchronous ``check_authority`` gate (EC-35).
+    """
+    from aether.memory.trust_state import current_trust_stage
+
+    trust_stage = await current_trust_stage(db)
     return check_authority(
-        inputs["agent"], inputs["action_type"], inputs["level"], db, session_id=inputs.get("session_id")
+        inputs["agent"], inputs["action_type"], inputs["level"], db,
+        session_id=inputs.get("session_id"), trust_stage=trust_stage,
     )
