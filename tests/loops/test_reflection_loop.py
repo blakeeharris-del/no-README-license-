@@ -17,6 +17,7 @@ from asgi_lifespan import LifespanManager
 from sqlalchemy import select
 
 from aether.loops.reflection_loop import ReflectionLoop
+from aether.loops.watchdog import LoopWatchdog
 from aether.models.enums import LoopStatus, LoopType
 from aether.models.runtime import SkillInvocationLog
 from aether.models.runtime import LoopRun
@@ -31,6 +32,42 @@ async def test_reflection_loop_runs_sequence(db_session, test_session_row):
     assert loop_run.loop_type == LoopType.REFLECTION
     assert loop_run.status == LoopStatus.COMPLETED
     assert loop_run.end_time is not None
+
+
+# ---- EC-29: single-pass bound (present-and-honored by construction) ----
+
+@pytest.mark.asyncio
+async def test_reflection_single_pass_bound(db_session, test_session_row):
+    """Reflection is single-pass: it carries its configured bounds and
+    never iterates toward the iteration limit (iteration_count stays 1),
+    so the bound is present-and-honored by construction — not left
+    unproven."""
+    from datetime import datetime, timedelta, timezone
+
+    loop_run = await ReflectionLoop().run(test_session_row.id, db_session)
+
+    assert loop_run.max_iterations == ReflectionLoop.MAX_ITERATIONS      # 3
+    assert loop_run.max_duration_ms == ReflectionLoop.MAX_DURATION_MS    # 300000
+    assert loop_run.iteration_count == 1        # single pass, never iterates toward the limit
+    assert loop_run.status == LoopStatus.COMPLETED
+
+    # And the duration bound is real, not assumed: a backdated reflection
+    # row is force-terminated by the watchdog.
+    backdated = LoopRun(
+        loop_type=LoopType.REFLECTION, trigger="session.closed", session_id=test_session_row.id,
+        status=LoopStatus.RUNNING, iteration_count=1,
+        max_iterations=ReflectionLoop.MAX_ITERATIONS, max_duration_ms=ReflectionLoop.MAX_DURATION_MS,
+        start_time=datetime.now(timezone.utc) - timedelta(milliseconds=ReflectionLoop.MAX_DURATION_MS + 5000),
+    )
+    db_session.add(backdated)
+    await db_session.commit()
+
+    await LoopWatchdog._check_loops(db_session)
+
+    terminated = (await db_session.execute(
+        select(LoopRun).where(LoopRun.id == backdated.id)
+    )).scalar_one()
+    assert terminated.status == LoopStatus.FORCED_TERMINATION
 
     # Steps 1-3 ran via this loop_run (invoked with loop_run_id set).
     logged = set((await db_session.execute(
