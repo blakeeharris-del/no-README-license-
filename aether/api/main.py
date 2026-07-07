@@ -117,6 +117,7 @@ async def standard_error_handler(request: Request, exc: Exception) -> JSONRespon
     )
 
 
-from aether.api.routes import session  # noqa: E402  (registered after `app` exists)
+from aether.api.routes import dashboard, session  # noqa: E402  (registered after `app` exists)
 
 app.include_router(session.router)
+app.include_router(dashboard.router)

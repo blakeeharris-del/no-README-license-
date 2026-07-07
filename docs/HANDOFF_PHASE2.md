@@ -76,6 +76,61 @@ Safety has **no iteration limit** by design (`max_iterations: null`, line
    schema permits only one node-less pending P0 per session. Regression:
    `test_failsafe_dedupes_p0_instead_of_crashing`.
 
+## Level 2 Dashboard (AETHER_DASHBOARD_SPEC_v1.0)
+
+Built as a live view over the Memory Layer (the spec's own framing, §1):
+`aether/schemas/dashboard.py` (six-zone model + four-state vocabulary),
+`aether/api/routes/dashboard.py` (`build_dashboard` assembler +
+`GET /dashboard` JSON + `GET /dashboard/view` server-rendered HTML).
+
+- **Cross-reference (v2.3 → v2.8):** the spec cites Foundation v2.3 §16;
+  v2.8 §16 (line 1025) is identical — "pillar health scores, active
+  deadline timelines, trust maturity status, and action queues" — and
+  exit criterion #18 (line 1241) matches. No divergence; built against
+  current requirements.
+- **EC-34 (forced):** `test_ec34_...` seeds live nodes/approvals, asserts
+  the dashboard's values equal the seed verbatim, then mutates
+  (resolve approval, add node) and confirms a reload reflects the change —
+  proving no caching/placeholders.
+- **EC-33:** six zones present + fixed pillar order asserted; Section 7
+  exclusions asserted on the rendered DOM where the medium allows (exactly
+  one command input + one search input, no `<img>`/avatar, no
+  `@keyframes`/animation, `overflow:hidden` desktop / no scroll, no
+  box-shadow/gradient/blur, one accent color). **Flagged for Blake's
+  visual review** (not claimable in a test): actual dark-theme/contrast
+  appearance, that there is genuinely no idle motion when rendered in a
+  browser, and true unscrolled fit at real desktop viewport sizes.
+
+### Dashboard rulings / deviations (flagged for close-out)
+
+1. **"New" status not emitted (ruling, Section 5).** New is defined by
+   revert-on-view ("not yet seen … Reverts to On Track or Attention once
+   viewed"), which needs per-item view-tracking the schema lacks. Emitting
+   New as "created since last close" would make everything permanently New
+   with no revert — a broken state. The assembler produces
+   Attention/Scheduled/On Track from live deadline state; New stays
+   reserved in the vocabulary (`DashboardStatus.NEW`) pending a
+   `viewed`/`last_seen` field. Cited at `dashboard.py` `_node_status`.
+2. **§16 "trust maturity status" is not a dashboard zone.** The Dashboard
+   Spec's Section 2 defines exactly six zones (no trust-maturity zone) —
+   true in both v2.3 and v2.8. Built to the spec's six zones; adding a
+   trust display would exceed the spec. Observation for Blake if he wants
+   §16's trust-maturity line reflected (would be a spec amendment).
+3. **Source-freshness proxy.** No external connectors in Phase-2, so the
+   header freshness indicator is bound to the nearest live checkable
+   signal (a `skill_invocation_log` marked `timeout`). True connector
+   freshness is Phase-3.
+4. **Today is deadline-driven.** 6.3's "Executive Brief" is bound to live
+   deadline nodes in deadline order (the brief's dominant priority
+   signal). Full session-briefer integration (flagged nodes, synthesis
+   signals) needs a session-scoped load — deferred.
+5. **Memory "Entities: N" = linked-node count** (`node_links` from the
+   node) as the live proxy for related items.
+6. **Bug fixed (stored XSS).** `render_dashboard_html` interpolated user
+   content (node titles/descriptions) into HTML unescaped. Fixed with
+   `html.escape` on all user-controlled values; regression test
+   `test_user_content_is_html_escaped`.
+
 ## Open seams (from the consolidation checkpoint — not yet wired)
 
 - `/close` performs §16.6 STEP 3–5 but not STEP 1–2 (Shutdown Loop not
