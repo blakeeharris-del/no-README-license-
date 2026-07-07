@@ -27,68 +27,47 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aether.memory.trust_state import TRUST_MARKER, current_trust_stage
-from aether.models.enums import (
-    ActionType, AgentName, NodeStatus, SessionStatus,
+from aether.memory.trust_state import (
+    _LADDER,
+    TRUST_MARKER,
+    current_trust_stage,
+    execute_trust_advance,
+    surface_advancement_evidence,
 )
-from aether.models.logs import ActionLog
-from aether.models.nodes import Node
-from aether.models.runtime import SkillInvocationLog
-from aether.models.sessions import Session
 
 logger = logging.getLogger("aether.agents.trust")
 
-# Canonical live-stage reader now lives in aether.memory.trust_state and
-# is re-exported here (see module docstring). ``_MARKER`` is kept as an
-# alias of the shared constant so the transition-writer below stays in
-# sync with the reader.
+# Canonical live-stage reader + the advancement ladder now live in
+# aether.memory.trust_state (memory layer, so the skills-layer gate can
+# consume them). Re-exported here for existing callers.
 _MARKER = TRUST_MARKER
-__all__ = ["current_trust_stage", "evaluate_and_advance"]
-# Evidence thresholds for "demonstrated reliable L0-L1 operation".
-_MIN_CLEAN_SESSIONS = 3
-_MIN_OK_INVOCATIONS = 5
+__all__ = [
+    "current_trust_stage", "evaluate_and_advance",
+    "surface_advancement_evidence", "execute_trust_advance",
+]
 
 
-async def _reliable_l0_l1_evidence(db: AsyncSession) -> tuple[bool, str]:
-    closed_sessions = (
-        await db.execute(
-            select(func.count()).select_from(Session).where(Session.status == SessionStatus.CLOSED)
-        )
-    ).scalar_one()
-    ok_invocations = (
-        await db.execute(
-            select(func.count()).select_from(SkillInvocationLog)
-            .where(SkillInvocationLog.status == "ok")
-        )
-    ).scalar_one()
-    ok = closed_sessions >= _MIN_CLEAN_SESSIONS and ok_invocations >= _MIN_OK_INVOCATIONS
-    reason = (f"{closed_sessions} closed sessions, {ok_invocations} successful "
-              f"L0-L1 skill invocations")
-    return ok, reason
-
-
-async def evaluate_and_advance(db: AsyncSession, session_id: UUID) -> str:
+async def evaluate_and_advance(
+    db: AsyncSession, session_id: UUID, confirmed_by: str | None = None
+) -> str:
     """
-    Advance T0 -> T1 if reliable L0-L1 operation is demonstrated, logging
-    the transition. Returns the (possibly advanced) current stage.
+    Sign-off-gated advancement (Blake's ruling: NO stage advances
+    automatically, T0->T1 included — this is the intended surgery on the
+    Phase-1 auto-advancing version).
+
+    Without ``confirmed_by`` this SURFACES only: it advances nothing and
+    returns the live stage. That is AETHER's role — present the evidence,
+    never self-promote. With an explicit ``confirmed_by`` (Blake's role) it
+    executes the single next ladder step via ``execute_trust_advance``,
+    which still requires the evidence bar to be met. There is no code path
+    that advances the stage without an ``execute_trust_advance`` call.
     """
     current = await current_trust_stage(db)
-    if current != "T0":
-        return current  # Phase-1 only handles the first earned transition
-
-    ok, reason = await _reliable_l0_l1_evidence(db)
-    if not ok:
-        return "T0"
-
-    db.add(ActionLog(
-        session_id=session_id,
-        agent=AgentName.MASTER,
-        action_type=ActionType.SURFACE,
-        output_summary=f"{_MARKER} T0->T1: {reason}"[:500],
-    ))
-    await db.flush()
-    logger.info("Trust maturity advanced T0->T1 (%s)", reason)
-    return "T1"
+    next_stage = _LADDER.get(current)
+    if next_stage is None:
+        return current  # already at the ceiling the ladder reaches (T3)
+    if confirmed_by is None:
+        return current  # surface-only; no advance without an explicit sign-off
+    return await execute_trust_advance(current, next_stage, confirmed_by, session_id, db)

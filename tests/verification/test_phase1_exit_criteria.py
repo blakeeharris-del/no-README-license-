@@ -197,7 +197,11 @@ async def test_ec25_trust_advances_t0_to_t1_logged(db_session):
                            {"signal": {"type": "deadline", "pillar": "legal", "days_until": 5}},
                            active_s.id, "verify", None, db_session)
 
-    stage = await evaluate_and_advance(db_session, active_s.id)
+    # EC-35 ruling: advancement is now sign-off-gated (no auto-advance).
+    # Without a confirmed_by source, evaluate_and_advance surfaces only.
+    assert await evaluate_and_advance(db_session, active_s.id) == "T0"
+    # With Blake's explicit sign-off, the T0->T1 step executes (evidence met).
+    stage = await evaluate_and_advance(db_session, active_s.id, confirmed_by="blake")
     assert stage == "T1"
     assert await current_trust_stage(db_session) == "T1"
     # transition logged

@@ -32,7 +32,8 @@ async def _log_trust_transition(db, session_id, transition: str) -> None:
             session_id=session_id,
             agent=AgentName.MASTER,
             action_type=ActionType.SURFACE,
-            output_summary=f"trust_maturity {transition}: earned in test",
+            # confirmed_by= is required by the 0007 CHECK (sourced advances).
+            output_summary=f"trust_maturity {transition}: confirmed_by=test; earned in test",
         )
     )
     await db.commit()

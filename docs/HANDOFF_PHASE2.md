@@ -198,6 +198,70 @@ default per Foundation §10.6). Exercised on five real, distinct decisions
   records are unconfirmed until the explicit act, and the source
   requirement is enforced both in code and by the DB CHECK.
 
+## EC-35 — global trust-advancement ladder (T0→T1→T2→T3)
+
+Built to Blake's approved rulings. `aether/memory/trust_state.py`
+(evidence + advance, memory layer so the skills-layer gate can consume
+it), `aether/agents/trust.py` (`evaluate_and_advance` converted),
+migration 0007 (action_log sourced-marker CHECK).
+
+**The three rulings, recorded with citations:**
+1. **Trust is global** — one system-wide stage. The Foundation-internal
+   tension is resolved in favor of **§9.2** (line 292: trust maturity is a
+   single accumulated stage governing standing-permission scope; the stage
+   table has no pillar dimension). **§18 criterion 20** (line 1249, "T3 in
+   at least two pillars based on audited performance") is the **evidence
+   basis** — the T3 bar requires confirmed accuracy in ≥2 pillars — not a
+   per-pillar stage.
+2. **No stage advances automatically** — T0→T1 included (no low-stakes
+   exception). AETHER surfaces evidence (read-only); Blake executes.
+   Basis: **DP-10** (line 211, "never granted automatically; confirmed by
+   Blake").
+3. **Real signals only** — no computed "trust score". Every number traces
+   to real rows.
+
+**Evidence bars (Blake-tunable — RAISABLE, not lowerable):**
+- **T0→T1** (existing Phase-1 bar, now surfaced): ≥3 closed sessions, ≥5
+  ok skill invocations.
+- **T1→T2** *(proposed, awaiting Blake's confirm — §9.2 T2 "reliable L2
+  operation and a record of accurate L3 staging")*: ≥1 Blake-confirmed
+  decision, ≥5 clean closed sessions, ≥5-session zero-violation streak.
+- **T2→T3** (approved starting bar): ≥3 `decision_journal` rows with
+  `confirmed_correct=true AND confirmed_by='blake'` in **each of ≥2 distinct
+  pillars**; ≥10 clean closed sessions; ≥10-session zero-violation streak;
+  0 degraded skills (`skill_performance.below_threshold`). "Clean session"
+  = closed with none of `loop_runs.status='forced_termination'`,
+  `pending_escalations.escalation_type IN ('safety_alert','correction_exhaust')`,
+  `action_log.output_summary LIKE 'authority_violation%'`.
+- **`decision_journal` (EC-38) is the audited-accuracy source** for the
+  per-pillar L3 evidence.
+
+**Mechanism:** `surface_advancement_evidence(target, db)` (read-only,
+advances nothing) and `execute_trust_advance(from, to, confirmed_by,
+session_id, db)` (the ONLY writer) are **separate functions, separate
+roles**. `execute` structurally requires a non-empty `confirmed_by`
+(ValueError) AND the migration-0007 CHECK `ck_action_log_trust_marker_sourced`
+makes an unsourced `trust_maturity` marker impossible at the DB level
+(mirrors the `decision_journal` discipline). It refuses to advance unless
+the evidence bar is met and the step is a single valid rung. The gate
+reads the new stage live with no further wiring (trust-wiring 5e686de).
+
+**Documented change to Phase-1 behavior:** `evaluate_and_advance`
+(trust.py) previously **auto-advanced** T0→T1 when evidence passed. Per
+ruling #2 it is now **sign-off-gated**: without `confirmed_by` it surfaces
+only (returns the live stage, advances nothing); with `confirmed_by` it
+delegates to `execute_trust_advance`. No production path called it
+(it was never wired into session close), so no runtime regression; the
+EC-25 test was adjusted to the sign-off flow (kept green), not deleted.
+
+**Trust remains global** per ruling #1 — the stage is one action_log
+marker read by `current_trust_stage`; there is no per-pillar stage.
+
+**Open seam (not a bug):** the advance functions exist but are **not yet
+exposed via an API endpoint** for Blake to invoke in a running system
+(analogous to `/approve` for actions). Surfacing evidence + executing an
+advance from the live app is a follow-up.
+
 ## Open seams (from the consolidation checkpoint — not yet wired)
 
 - `/close` performs §16.6 STEP 3–5 but not STEP 1–2 (Shutdown Loop not
