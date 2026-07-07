@@ -111,11 +111,33 @@ Built as a live view over the Memory Layer (the spec's own framing, §1):
    Attention/Scheduled/On Track from live deadline state; New stays
    reserved in the vocabulary (`DashboardStatus.NEW`) pending a
    `viewed`/`last_seen` field. Cited at `dashboard.py` `_node_status`.
-2. **§16 "trust maturity status" is not a dashboard zone.** The Dashboard
-   Spec's Section 2 defines exactly six zones (no trust-maturity zone) —
-   true in both v2.3 and v2.8. Built to the spec's six zones; adding a
-   trust display would exceed the spec. Observation for Blake if he wants
-   §16's trust-maturity line reflected (would be a spec amendment).
+2. **§16 "trust maturity status" is not a dashboard zone (divergence,
+   flagged for the G3 Foundation-interpretation call).** Foundation §16
+   (line 1025) lists "trust maturity status" among the Level 2 Dashboard's
+   contents, but the Dashboard Spec's Section 2 defines exactly six zones
+   with **no** trust-maturity zone — a divergence present in both v2.3 and
+   v2.8. Built to the spec's six zones (adding a trust display would exceed
+   the spec). This is a genuine Foundation-vs-supporting-doc divergence:
+   resolving it (amend the spec to add a trust indicator, or amend §16 to
+   drop the line) is a **G3 Foundation-interpretation decision for Blake**,
+   not something to resolve silently in code.
+3. **Desktop layout overflow — found in visual review, fixed.** The
+   initial CSS sized `.grid` with hardcoded pixel math
+   (`calc(100vh - 53px - 26px)`) that omitted the chips row and the Files
+   strip's real height, so at 1440×900 the Files zone was clipped below
+   the viewport (a Section-7 "no scrolling / all six zones on one
+   unscrolled viewport" violation). Fixed with a flex-column layout
+   (header/chips/grid[flex:1]/files) so the grid fills remaining space and
+   Files is always visible. Confirmed by screenshot at 1440×900.
+4. **Accent on the pending-reviews badge (borderline, flag for Blake).**
+   Rule Theme: accent "only for the Attention state — nowhere else." The
+   accent renders on the two Attention items (Today row, Legal tile) and
+   on the header pending-reviews count badge. The badge is defensible as an
+   Attention signal (pending approvals "require the user's judgment or
+   action within the current session" = the Section 5 Attention
+   definition), but it is the one accent use that is a count, not a
+   Section-5 dot. Left as-is (not a clear violation); Blake to confirm
+   whether the badge should be neutral instead.
 3. **Source-freshness proxy.** No external connectors in Phase-2, so the
    header freshness indicator is bound to the nearest live checkable
    signal (a `skill_invocation_log` marked `timeout`). True connector

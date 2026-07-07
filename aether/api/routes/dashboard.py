@@ -243,8 +243,11 @@ _CSS = """
         --border:#262b31; --accent:#ff7a45; }
 * { box-sizing:border-box; }
 html, body { height:100vh; margin:0; overflow:hidden; }  /* no desktop scroll */
+/* Flex column so header/chips/grid/files always fit the viewport with no
+   overflow and no clipped zone — replaces fragile pixel-math heights. */
 body { background:var(--bg); color:var(--text);
-       font-family: ui-sans-serif, system-ui, sans-serif; }
+       font-family: ui-sans-serif, system-ui, sans-serif;
+       display:flex; flex-direction:column; }
 .dot { display:inline-block; width:9px; height:9px; border-radius:50%;
        border:1px solid var(--muted); vertical-align:middle; }
 .dot.filled { background:var(--muted); }
@@ -253,15 +256,15 @@ body { background:var(--bg); color:var(--text);
 .on_track .dot, .dot.on_track { background:var(--muted); border-color:var(--muted); }
 .new .dot, .dot.new { background:transparent; border-color:var(--muted); }
 .scheduled .dot, .dot.scheduled { background:transparent; border-color:var(--muted); }
-header { display:flex; align-items:center; gap:16px; padding:10px 16px;
+header { flex:0 0 auto; display:flex; align-items:center; gap:16px; padding:10px 16px;
          border-bottom:1px solid var(--border); }
+.chips { flex:0 0 auto; padding:4px 16px; color:var(--muted); font-size:12px; }
 .wordmark { font-weight:700; letter-spacing:1px; }
 #input-bar { flex:1; background:var(--panel); border:1px solid var(--border);
              color:var(--text); padding:8px 12px; }
 .indicators { display:flex; gap:12px; align-items:center; }
 .badge { background:var(--accent); color:#000; border-radius:8px; padding:0 6px; font-size:12px; }
-.grid { display:grid; grid-template-columns:25% 45% 30%;
-        height:calc(100vh - 53px - 26px); }
+.grid { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:25% 45% 30%; }
 .col { border-right:1px solid var(--border); padding:12px; overflow:hidden; }
 .center { display:flex; flex-direction:column; }
 .center .panel { flex:1; border-bottom:1px solid var(--border); }
@@ -269,7 +272,7 @@ header { display:flex; align-items:center; gap:16px; padding:10px 16px;
 .label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:1px; }
 .row { padding:6px 0; border-bottom:1px solid var(--border); }
 .tile { padding:6px 0; border-bottom:1px solid var(--border); }
-.files { border-top:1px solid var(--border); padding:6px 16px; color:var(--muted); height:26px; }
+.files { flex:0 0 auto; border-top:1px solid var(--border); padding:6px 16px; color:var(--muted); }
 #memory-search { width:100%; background:var(--panel); border:1px solid var(--border);
                  color:var(--text); padding:6px 10px; margin-bottom:8px; }
 button.approval { background:var(--panel); color:var(--text);
