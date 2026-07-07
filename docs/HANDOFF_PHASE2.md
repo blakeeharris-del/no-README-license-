@@ -153,6 +153,51 @@ Built as a live view over the Memory Layer (the spec's own framing, §1):
    `html.escape` on all user-controlled values; regression test
    `test_user_content_is_html_escaped`.
 
+## EC-38 — Decision Protocol exercised on ≥5 decisions with confirmed accuracy
+
+`executive.decision_protocol` confirmed real and **unchanged** (Phase-1
+EC-27; Sense→Analyze→Challenge→Recommend, recommendation deferred by
+default per Foundation §10.6). Exercised on five real, distinct decisions
+(one per pillar) against live Postgres; each produces a real
+`decision_journal` row and a genuine, sourced confirmation.
+
+- **Accuracy-confirmation mechanism (documented schema addition,
+  migration 0006):** a new `decision_journal` table — the "Decision
+  Journal" the Dashboard Spec Memory zone already names, so not an
+  invented concept. It records the full protocol run plus
+  `confirmed_correct` / `confirmed_by` / `confirmed_at`, NULL until an
+  explicit confirmation. `memory.decision_journal.confirm_decision` is the
+  only path that sets them, and requires a non-empty `confirmed_by`; a DB
+  CHECK (`confirmed_correct IS NULL OR confirmed_by IS NOT NULL`) forbids
+  an anonymous/back-filled outcome. No accuracy score is fabricated and no
+  synthetic ground-truth is generated (EC-19 preserved). App role gets
+  SELECT/INSERT/UPDATE (UPDATE only for the confirmation transition),
+  never DELETE. **DATA_SCHEMA_v2.0.md should be regenerated to list the
+  16th application table.**
+- **Spec question ruled (with citation):** "confirmed accuracy" reads as
+  an **explicit, sourced confirmation act**, not an inferred outcome
+  signal. Basis: Foundation §10.6 (the user confirms/asks) and Impl Plan
+  §18.1 ("Only an explicit response … constitutes authorization; silence,
+  inaction, and implied consent are not approval"), consistent with the
+  INV-06 discipline that `user_confirmed` is set only by an explicit
+  `/approve`. In production the confirming source is Blake; the test
+  stands in for that user. **Alternative reading (an objective outcome
+  signal) is left for Blake if he prefers it** — flagged, not silently
+  chosen.
+- **Observation (out of scope, decision_protocol not modified this turn):**
+  `_wants_recommendation` uses a naive substring match, so an action that
+  merely *describes* something as "recommended" (or contains "advise")
+  falsely triggers the recommendation path instead of deferring. Minor
+  correctness looseness; flagged for a future decision_protocol pass.
+- **Forced assertions (`test_decision_journal_ec38.py`, 3 tests):** five
+  distinct `decision_journal` rows; each has non-empty
+  sense/analysis/challenge (full sequence), `deferred=True` +
+  `recommendation == _DEFER` (§10.6), `approval_required=True` (task→L3),
+  and `confirmed_correct=True` with `confirmed_by='blake'`; ≥5 real
+  `executive.decision_protocol` `ok` invocation logs (not stubs). Plus:
+  records are unconfirmed until the explicit act, and the source
+  requirement is enforced both in code and by the DB CHECK.
+
 ## Open seams (from the consolidation checkpoint — not yet wired)
 
 - `/close` performs §16.6 STEP 3–5 but not STEP 1–2 (Shutdown Loop not

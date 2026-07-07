@@ -87,6 +87,66 @@ class ActionLog(Base):
         )
 
 
+class DecisionRecord(Base):
+    """
+    TABLE: decision_journal (Phase-2, migration 0006).
+
+    One row per exercised Decision Protocol run (Foundation §10.6;
+    ``executive.decision_protocol``). This is the "Decision Journal" the
+    Dashboard Spec already names as a Memory-zone data source. Records the
+    full Sense -> Analyze -> Challenge sequence and whether the
+    recommendation was deferred (§10.6 default).
+
+    EC-38 confirmation mechanism (documented schema addition): the last
+    three columns record that a decision's outcome was *confirmed correct*
+    by an explicit, sourced confirmation — never synthesized. ``UPDATE`` is
+    permitted only for the one NULL->set confirmation transition (grant in
+    0006), mirroring how ``user_confirmed`` is set only by ``/approve``.
+    The CHECK ``(confirmed_correct IS NULL OR confirmed_by IS NOT NULL)``
+    forbids recording an outcome without naming who confirmed it — so a
+    confirmation can never be anonymous or back-filled without a source
+    (guards against the EC-19 "no synthetic ground truth" failure mode).
+    """
+
+    __tablename__ = "decision_journal"
+    __table_args__ = (
+        CheckConstraint(
+            "confirmed_correct IS NULL OR confirmed_by IS NOT NULL",
+            name="ck_dj_confirmation_sourced",
+        ),
+        Index("idx_dj_session", "session_id"),
+        Index("idx_dj_confirmed", "confirmed_correct"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("sessions.id"), nullable=False
+    )
+    proposed_action: Mapped[str] = mapped_column(Text, nullable=False)
+    pillars: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    sense_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    analysis: Mapped[str] = mapped_column(Text, nullable=False)
+    challenge: Mapped[str] = mapped_column(Text, nullable=False)
+    recommendation: Mapped[str] = mapped_column(Text, nullable=False)
+    deferred: Mapped[bool] = mapped_column(nullable=False, server_default=text("true"))
+    approval_required: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # --- EC-38 confirmation (NULL until an explicit, sourced confirmation) ---
+    confirmed_correct: Mapped[Optional[bool]] = mapped_column(nullable=True)
+    confirmed_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<DecisionRecord id={self.id} deferred={self.deferred} "
+            f"confirmed={self.confirmed_correct}>"
+        )
+
+
 class SynthesisRun(Base):
     """TABLE: synthesis_runs"""
 
