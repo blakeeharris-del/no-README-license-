@@ -63,6 +63,7 @@ from aether.models.enums import (
     EscalationType,
     LoopStatus,
     LoopType,
+    PillarName,
     PriorityClass,
     SkillCategory,
     SkillStatus,
@@ -533,3 +534,65 @@ class MetaLoopRun(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<MetaLoopRun id={self.id} run_at={self.run_at} triggered_by={self.triggered_by}>"
+
+
+class StandingAuthority(Base):
+    """
+    TABLE: standing_authorities (Phase-2, migration 0008, EC-36).
+
+    A Blake-authored standing L4 authority: a specific written rule that
+    lets a defined (pillar, action_type) run WITHOUT per-action approval,
+    but only while global trust >= T3 (Foundation §9.2: "A defined set of
+    L4 actions (routine, bounded, reversible) may be granted standing
+    authority"). Per-pillar scoped, so global T3 grants eligibility, not
+    blanket autonomy.
+
+    INV-05 reconciliation (flagged in HANDOFF_PHASE2.md): a standing grant
+    IS the "logged, user-approved authorization" INV-05 requires — explicit
+    (granted_by NOT NULL, never inferred), permanent (never DELETEd;
+    revocation is status='revoked'), user-approved (Blake). §9.2 removes
+    only the *per-action* confirmation step; the Action Gateway still logs
+    every execution under a grant (the permanent per-execution record).
+
+    Structural guards:
+      - ``granted_by`` NOT NULL — a grant with no source is impossible (the
+        anti-inference guard; mirrors decision_journal / 0007).
+      - ``reversible`` CHECK = true — only reversible actions qualify
+        (§9.2 "reversible"; DP-08 reversibility-by-default). Reversibility
+        is Blake's per-grant judgment recorded in ``rationale``.
+      - ``renewal_date`` NOT NULL — §9.2 "require periodic renewal".
+      - UPDATE granted (status active->lapsed/revoked); DELETE never (INV-02).
+    """
+
+    __tablename__ = "standing_authorities"
+    __table_args__ = (
+        CheckConstraint("reversible = true", name="ck_sa_reversible_only"),
+        CheckConstraint(
+            "status IN ('active','lapsed','revoked')", name="ck_sa_status"
+        ),
+        Index("idx_sa_lookup", "pillar", "action_type", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    pillar: Mapped[PillarName] = mapped_column(pg_enum(PillarName, "pillar_name"), nullable=False)
+    action_type: Mapped[str] = mapped_column(Text, nullable=False)
+    bounds: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    reversible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)          # the written rule
+    granted_by: Mapped[str] = mapped_column(Text, nullable=False)         # anti-inference guard
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    renewal_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<StandingAuthority {self.pillar}/{self.action_type} "
+            f"status={self.status} renewal={self.renewal_date}>"
+        )

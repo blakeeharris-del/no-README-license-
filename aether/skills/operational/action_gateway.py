@@ -64,13 +64,49 @@ async def action_gateway_skill(inputs: dict, db) -> dict:
             status="blocked", reason="insufficient_authority", log_id=log_entry.id
         ).model_dump(mode="json")
 
-    # STEP 3: user approval [INV-05].
-    try:
-        await assert_has_user_approval(session_id, db, "action_gateway")
-    except InvariantViolation:
-        return GatewayResult(
-            status="blocked", reason="no_approval", log_id=log_entry.id
-        ).model_dump(mode="json")
+    # STEP 3: authorization [INV-05].
+    #
+    # Standing authority (EC-36, Foundation §9.2 T3) is a NARROW,
+    # all-conditions-must-hold bypass of the *per-action* approval step —
+    # NOT a bypass of authorization or of logging. INV-05 (line 227, "no
+    # exception, no bypass, no implicit authorization") is preserved: a
+    # standing grant IS the logged, user-approved authorization (explicit,
+    # Blake-authored, permanent), and §9.2 removes only the per-action
+    # confirmation. Every execution under a grant is logged here — the
+    # permanent per-execution record INV-05 requires. (See the INV-05-vs-§9.2
+    # reconciliation flagged in HANDOFF_PHASE2.md.)
+    #
+    # Anything short of the full conjunction (active grant covering
+    # (action_type, pillar) AND live trust >= T3 AND within bounds AND
+    # before renewal) falls through to the unchanged per-action approval.
+    from aether.memory.standing_authority import find_valid_standing_grant
+
+    # ``action_name`` is the SPECIFIC external action (e.g.
+    # 'categorize_transaction') that a standing grant scopes — distinct from
+    # the abstract ``action_type`` (read/write/confirm) the authority matrix
+    # checks at STEP 2. Absent ``action_name`` (the ordinary case), no grant
+    # matches and the per-action approval default applies.
+    pillar = inputs.get("pillar")
+    action_name = inputs.get("action_name")
+    grant = await find_valid_standing_grant(
+        action_name, pillar, trust_stage, inputs.get("payload") or {}, db
+    )
+    if grant is not None:
+        db.add(ActionLog(
+            session_id=session_id,
+            agent=AgentName(requesting_agent),
+            action_type=ActionType.SURFACE,
+            output_summary=f"executed under standing_authority {grant.id} ({pillar}/{action_name})"[:500],
+        ))
+        await db.flush()
+    else:
+        # Default path (UNCHANGED): per-action approval required [INV-05].
+        try:
+            await assert_has_user_approval(session_id, db, "action_gateway")
+        except InvariantViolation:
+            return GatewayResult(
+                status="blocked", reason="no_approval", log_id=log_entry.id
+            ).model_dump(mode="json")
 
     # STEP 4: trust-stage gate. Reads the LIVE stage (EC-35), not static
     # config: below T2, execution is always mocked.

@@ -262,6 +262,70 @@ exposed via an API endpoint** for Blake to invoke in a running system
 (analogous to `/approve` for actions). Surfacing evidence + executing an
 advance from the live app is a follow-up.
 
+## EC-36 — standing L4 authority
+
+Built per approved Proposal 3. `standing_authorities` table (migration
+0008 — the **17th application table; DATA_SCHEMA_v2.0.md regeneration
+debt**), `aether/memory/standing_authority.py` (propose/grant/check),
+gateway integration in `action_gateway.py` STEP 3.
+
+**Schema (`standing_authorities`):** `pillar` (enum), `action_type` (the
+specific action the grant scopes), `bounds` (JSONB), `reversible` (BOOL,
+`CHECK reversible=true`), `rationale` (NOT NULL — the written rule),
+`granted_by` (NOT NULL — anti-inference guard), `granted_at`,
+`renewal_date` (NOT NULL — §9.2 periodic renewal), `status`
+(active/lapsed/revoked). App role SELECT/INSERT/UPDATE, never DELETE
+(revoke = `status='revoked'`, INV-02).
+
+**Propose-then-approve + structural anti-inference guarantee:**
+`propose_standing_authorities` derives candidates from `_STANDING_ELIGIBLE`
+— a static, hand-authored routine/bounded/reversible classification —
+minus existing grants. It reads **nothing else**; the module imports
+neither `action_log` nor `pending_escalations`, so approval frequency
+**structurally cannot** become a proposal or a grant. A grant row exists
+only via `grant_standing_authority` (requires non-empty `granted_by` +
+`reversible=true`, both also schema-enforced). Reversibility is **Blake's
+per-grant judgment recorded in `rationale`** (DP-08 reversibility-by-
+default), CHECK-enforced.
+
+**Gateway integration (the critical path):** STEP 3 skips per-action
+approval **only** if the full conjunction holds — an `active` grant
+covering `(action_name, pillar)` AND live `current_trust_stage ≥ T3` AND
+within bounds AND `now() < renewal_date`. The abstract `action_type`
+(read/write/confirm) still passes STEP 2's authority-level check; the
+**specific `action_name`** is what a grant scopes and the T3 gate lives
+entirely in the standing check. Any miss → the existing per-action
+approval path, unchanged.
+
+**INV-05 ↔ §9.2 reconciliation (flagged tension, cited):** INV-05
+(line 227) says "no exception, no bypass, no implicit authorization" for
+external actions; §9.2 permits standing action "**without per-action
+confirmation**." Reconciled: a standing grant **IS** the "logged,
+user-approved authorization" INV-05 requires — explicit (Blake-authored,
+never inferred), permanent (never deleted; revoke-not-delete), user-
+approved. §9.2 removes only the *per-action* step; the gateway still
+**logs every execution under a grant** (the permanent per-execution
+record). So standing authority is not an unauthorized/implicit bypass —
+it is authorization granted in advance, and Blake's EC-36 directive +
+§9.2 govern the reconciliation.
+
+**Bug found in adversarial review, fixed at the site:** `_within_bounds`
+originally **ignored** any bound key that wasn't `max_<field>` — a
+**fail-open** on an authorization gate (an unenforceable bound would
+silently authorize). Fixed to **fail closed**: an unrecognized bound key
+denies. Regression: `test_unrecognized_bound_fails_closed`.
+
+**Forced tests (`test_standing_authority_ec36.py`, 12):** the positive
+case (valid grant + T3 + in-bounds + before-renewal → auto-approved,
+proceeded with **no** per-action approval, execution logged) and **seven**
+adversarial fall-throughs (lapsed, revoked, wrong pillar, wrong action,
+out-of-bounds, unrecognized-bound fail-closed, trust<T3) — each blocks to
+`no_approval` (falls through, never auto-approves). Plus: 3 real grants
+each traceable to a written rule (granted_by=blake, reversible, rationale,
+renewal); "repeated approvals create no standing authority"; and the
+grant guards (empty source / non-reversible rejected in code AND by DB
+CHECK).
+
 ## Open seams (from the consolidation checkpoint — not yet wired)
 
 - `/close` performs §16.6 STEP 3–5 but not STEP 1–2 (Shutdown Loop not
