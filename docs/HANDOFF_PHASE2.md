@@ -85,4 +85,8 @@ Safety has **no iteration limit** by design (`max_iterations: null`, line
 - Sub-loops (correction/escalation/safety/shutdown) don't re-check
   `LoopWatchdog.is_healthy()` (enforced at GoalLoop entry).
 - Shutdown STEP 2 inline force-termination deviates from §16.6's
-  signal/wait/clean-exit protocol (no detached processes in Phase 2).
+  signal/wait/clean-exit protocol (no detached processes in Phase 2)
+  (INV-09 inline force-termination deviation).
+- Escalation `max_duration_ms=10000` and Shutdown `max_duration_ms=15000`
+  are documented choices — §16.5/§16.6 state no duration bound; values
+  chosen to sit inside the system's 10s safety envelope / EC-31's 60s.
