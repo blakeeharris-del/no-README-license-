@@ -220,13 +220,14 @@ migration 0007 (action_log sourced-marker CHECK).
 3. **Real signals only** — no computed "trust score". Every number traces
    to real rows.
 
-**Evidence bars (Blake-tunable — RAISABLE, not lowerable):**
+**Evidence bars — BLAKE-CONFIRMED (settled 2026-07-07; RAISABLE, not
+lowerable by future ruling):**
 - **T0→T1** (existing Phase-1 bar, now surfaced): ≥3 closed sessions, ≥5
   ok skill invocations.
-- **T1→T2** *(proposed, awaiting Blake's confirm — §9.2 T2 "reliable L2
-  operation and a record of accurate L3 staging")*: ≥1 Blake-confirmed
-  decision, ≥5 clean closed sessions, ≥5-session zero-violation streak.
-- **T2→T3** (approved starting bar): ≥3 `decision_journal` rows with
+- **T1→T2** *(Blake-confirmed — §9.2 T2 "reliable L2 operation and a record
+  of accurate L3 staging")*: ≥1 Blake-confirmed decision, ≥5 clean closed
+  sessions, ≥5-session zero-violation streak.
+- **T2→T3** (Blake-confirmed): ≥3 `decision_journal` rows with
   `confirmed_correct=true AND confirmed_by='blake'` in **each of ≥2 distinct
   pillars**; ≥10 clean closed sessions; ≥10-session zero-violation streak;
   0 degraded skills (`skill_performance.below_threshold`). "Clean session"
@@ -235,6 +236,13 @@ migration 0007 (action_log sourced-marker CHECK).
   `action_log.output_summary LIKE 'authority_violation%'`.
 - **`decision_journal` (EC-38) is the audited-accuracy source** for the
   per-pillar L3 evidence.
+- **Threshold status (2026-07-07): the T1→T2 and T2→T3 bars are
+  Blake-confirmed** — promoted from proposed to the settled operative bars.
+  They remain RAISABLE, not lowerable, by future ruling. **G3 open-items
+  ledger group F (Blake-tunable thresholds awaiting confirmation) is now
+  CLOSED.** Only the confirmed/proposed status changed; the numbers, the
+  "clean session" definition, and the real signals are unchanged, so the
+  EC-35 trust-ladder tests are unaffected.
 
 **Mechanism:** `surface_advancement_evidence(target, db)` (read-only,
 advances nothing) and `execute_trust_advance(from, to, confirmed_by,

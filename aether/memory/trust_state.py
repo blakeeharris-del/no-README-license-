@@ -135,15 +135,18 @@ async def current_trust_stage(db: AsyncSession) -> str:
 _LADDER: dict[str, str] = {"T0": "T1", "T1": "T2", "T2": "T3"}
 
 # Thresholds. Foundation defines concrete numbers only for the qualitative
-# T0->T1 tier; T2/T3 numbers are a Phase-2 definition (a defensible analog
-# to the existing T0->T1 rule) and are Blake-tunable — RAISABLE, not
-# lowerable. Recorded as such in the ledger.
+# T0->T1 tier; the T1->T2 and T2->T3 bars are a Phase-2 definition (a
+# defensible analog to the existing T0->T1 rule). These are the settled,
+# BLAKE-CONFIRMED operative bars (confirmed 2026-07-07) — no longer
+# proposed. They remain RAISABLE, not lowerable, by future ruling. The
+# "clean session" definition and the real signals behind each number are
+# unchanged.
 _T1_MIN_CLOSED_SESSIONS = 3      # existing T0->T1 bar (Phase-1), now surfaced
 _T1_MIN_OK_INVOCATIONS = 5
-_T2_MIN_CONFIRMED = 1            # first accurate L3 staging (§9.2 T2)
+_T2_MIN_CONFIRMED = 1            # T1->T2 (confirmed): first accurate L3 staging (§9.2 T2)
 _T2_MIN_CLEAN_SESSIONS = 5
 _T2_MIN_STREAK = 5
-_T3_MIN_CONFIRMED_PER_PILLAR = 3   # §18 criterion-20 evidence basis...
+_T3_MIN_CONFIRMED_PER_PILLAR = 3   # T2->T3 (confirmed): §18 criterion-20 evidence basis...
 _T3_MIN_PILLARS = 2                 # ...in >= 2 distinct pillars
 _T3_MIN_CLEAN_SESSIONS = 10
 _T3_MIN_STREAK = 10
