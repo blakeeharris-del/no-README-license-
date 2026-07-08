@@ -1,10 +1,34 @@
-# AETHER — Phase-2 Build (Loop Engine & Dashboard) — WORK IN PROGRESS
+# AETHER — Phase-2 Build (Loop Engine & Dashboard) — COMPLETE
 
 Gate G2 → G3. Governed by `AETHER_PHASE2_PROMPT_v1.0`. Verified against a
-live PostgreSQL instance. This is a running ledger accumulated as Phase-2
-work lands; it becomes the final HANDOFF at `phase-2-complete`.
+live PostgreSQL instance. This is the final HANDOFF at `phase-2-complete`:
+all twelve exit criteria (EC-28–EC-39) verified on a fresh image (229
+tests passing, import-linter contract kept), DATA_SCHEMA regenerated
+(v2.1, 17 application tables), thresholds locked (below).
 
-## Loop layer — status so far
+> ## ⚠️ CARRIED G3 GATE CONDITIONS — READ FIRST
+>
+> **EC-37 and EC-39 are satisfied by HONEST SIMULATION, not by real
+> elapsed evidence.** This is the tag point (`phase-2-complete`); the fact
+> travels with it. Two named G3 gate-conditions remain **NOT YET
+> PERFORMED**, to be run before the G3 gate is passed — the mechanisms
+> exist and run unchanged on real data:
+>
+> - **EC-37 (three consecutive weekly Meta scorecards, no degradation):**
+>   re-confirm with **three real weekly `MetaLoop.run()` runs** at
+>   `window_end=now` (one per real elapsed week), not the three backdated
+>   windows the Phase-2 simulation used.
+> - **EC-39 (zero invariant violations across 30 sessions):** re-confirm by
+>   running the **invariant sweep over the most recent 30 REAL sessions**
+>   accrued in operation, not the 30 synthetic sessions the Phase-2
+>   simulation built.
+>
+> Until both are performed on real accumulated data, EC-37 and EC-39 are
+> "**satisfied-by-simulation, pending-G3-real-data**" — never report them
+> as unqualified "met." (Related Phase-0 gap: EC-14's 100-session stress
+> harness was never committed — see the ledger.)
+
+## Loop layer — status
 
 | Loop | Status | Key EC / evidence |
 |---|---|---|
