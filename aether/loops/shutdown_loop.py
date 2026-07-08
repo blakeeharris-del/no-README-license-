@@ -131,56 +131,13 @@ class ShutdownLoop:
 
         outcome = ShutdownOutcome(shutdown_loop_run_id=shutdown_run_id)
 
-        # STEP 1: identify all active processes for this session — EXCLUDING
-        # the shutdown loop's own row (self-exclusion).
-        active_loops = (
-            await db.execute(
-                select(LoopRun).where(
-                    LoopRun.session_id == session_id,
-                    LoopRun.status == LoopStatus.RUNNING,
-                    LoopRun.id != shutdown_run_id,
-                )
-            )
-        ).scalars().all()
-        active_subagents = (
-            await db.execute(
-                select(SubAgentRun).where(
-                    SubAgentRun.session_id == session_id,
-                    SubAgentRun.status.in_(_ACTIVE_SUBAGENT),
-                )
-            )
-        ).scalars().all()
-
-        # STEP 2: process in reverse spawn order (newest first = children
-        # before parents). Merge both tables on their spawn timestamp.
-        processes: list[tuple[datetime, str, object]] = []
-        for loop in active_loops:
-            processes.append((_aware(loop.start_time), "loop", loop))
-        for sa in active_subagents:
-            processes.append((_aware(sa.spawned_at), "sub_agent", sa))
-        processes.sort(key=lambda p: p[0], reverse=True)
-
-        now = datetime.now(timezone.utc)
-        for spawn_ts, kind, obj in processes:
-            # Inline architecture: no live coroutine to signal/await, so an
-            # active row is force-terminated (see module docstring). Leaving
-            # it RUNNING would be the orphan INV-09 forbids.
-            if kind == "loop":
-                obj.status = LoopStatus.FORCED_TERMINATION
-                obj.end_time = now
-                terminal = LoopStatus.FORCED_TERMINATION.value
-            else:
-                obj.status = SubAgentStatus.FORCE_TERMINATED
-                obj.terminated_at = now
-                terminal = SubAgentStatus.FORCE_TERMINATED.value
-            outcome.terminated.append(
-                TerminatedProcess(kind=kind, id=obj.id, spawn_ts=spawn_ts, terminal_status=terminal)
-            )
-        await db.flush()
-        logger.info(
-            "shutdown_loop: terminated %d active processes (reverse spawn order) for session %s",
-            len(outcome.terminated), session_id,
+        # STEP 1-2: terminate the full active tree (self-excluded), reverse
+        # spawn order. Extracted so /close can invoke it directly (closing
+        # the INV-09 orphan gap) without duplicating STEP 3-5.
+        outcome.terminated = await self.terminate_active_tree(
+            session_id, db, exclude_loop_run_id=shutdown_run_id
         )
+        now = datetime.now(timezone.utc)
 
         # STEP 3: preserve state. Serialize L1 to sessions.l1_snapshot and
         # ensure escalations are committed. There is no in-memory
@@ -228,6 +185,67 @@ class ShutdownLoop:
         if summary_fn is not None:
             return await summary_fn(l1)
         return await self._default_summary(l1)
+
+    async def terminate_active_tree(
+        self,
+        session_id: UUID,
+        db: AsyncSession,
+        *,
+        exclude_loop_run_id: Optional[UUID] = None,
+    ) -> list[TerminatedProcess]:
+        """§16.6 STEP 1-2: identify and force-terminate every active
+        ``loop_runs`` and ``sub_agent_runs`` for the session, in reverse
+        spawn order (children before parents). ``exclude_loop_run_id`` omits
+        the caller's own row (the Shutdown Loop's, when invoked from run()).
+
+        Reusable entry point: ``/close`` calls this directly to reach the
+        full nested tree (closing the INV-09 orphan gap) without duplicating
+        STEP 3-5, which the endpoint already performs."""
+        active_loops = (
+            await db.execute(
+                select(LoopRun).where(
+                    LoopRun.session_id == session_id,
+                    LoopRun.status == LoopStatus.RUNNING,
+                    *([LoopRun.id != exclude_loop_run_id] if exclude_loop_run_id is not None else []),
+                )
+            )
+        ).scalars().all()
+        active_subagents = (
+            await db.execute(
+                select(SubAgentRun).where(
+                    SubAgentRun.session_id == session_id,
+                    SubAgentRun.status.in_(_ACTIVE_SUBAGENT),
+                )
+            )
+        ).scalars().all()
+
+        processes: list[tuple[datetime, str, object]] = []
+        for loop in active_loops:
+            processes.append((_aware(loop.start_time), "loop", loop))
+        for sa in active_subagents:
+            processes.append((_aware(sa.spawned_at), "sub_agent", sa))
+        processes.sort(key=lambda p: p[0], reverse=True)
+
+        now = datetime.now(timezone.utc)
+        terminated: list[TerminatedProcess] = []
+        for spawn_ts, kind, obj in processes:
+            if kind == "loop":
+                obj.status = LoopStatus.FORCED_TERMINATION
+                obj.end_time = now
+                terminal = LoopStatus.FORCED_TERMINATION.value
+            else:
+                obj.status = SubAgentStatus.FORCE_TERMINATED
+                obj.terminated_at = now
+                terminal = SubAgentStatus.FORCE_TERMINATED.value
+            terminated.append(
+                TerminatedProcess(kind=kind, id=obj.id, spawn_ts=spawn_ts, terminal_status=terminal)
+            )
+        await db.flush()
+        logger.info(
+            "shutdown: terminated %d active processes (reverse spawn order) for session %s",
+            len(terminated), session_id,
+        )
+        return terminated
 
     async def _default_summary(self, l1: L1WorkingMemory) -> str:
         """Guarded LLM summary (temp=0.3), §16.6 STEP 4. Never blocks

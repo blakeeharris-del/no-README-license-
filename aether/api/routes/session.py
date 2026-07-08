@@ -210,6 +210,18 @@ async def close_session(session_id: UUID, db: AsyncSession = Depends(get_db)) ->
 
     await GoalLoop().complete(loop_run_id, LoopStatus.COMPLETED, db)
 
+    # §16.6 STEP 1-2 (EC-32 wiring): terminate any active nested tree —
+    # sub-loops (Correction/Escalation) and sub_agent_runs still active for
+    # this session — so nothing is orphaned at close (INV-09). Runs AFTER the
+    # goal loop is cleanly COMPLETED, so only the nested children are
+    # force-terminated. STEP 3-5 (snapshot, close, summary, reflection) are
+    # performed by this endpoint below, so the full ShutdownLoop.run() is not
+    # invoked here (it would duplicate them).
+    from aether.loops.shutdown_loop import ShutdownLoop
+
+    await ShutdownLoop().terminate_active_tree(session_id, db)
+    await db.commit()
+
     await db.execute(
         update(Session).where(Session.id == session_id).values(status=SessionStatus.CLOSED, ended_at=func.now())
     )

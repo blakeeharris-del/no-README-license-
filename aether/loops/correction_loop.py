@@ -178,21 +178,21 @@ class CorrectionLoop:
             else "invariant" if is_invariant
             else "retries_exhausted"
         )
-        db.add(
-            PendingEscalation(
-                escalation_type=EscalationType.CORRECTION_EXHAUST,
-                priority_class=PriorityClass.P1,
-                content={
-                    "title": "Correction exhausted",
-                    "description": f"Correction for {error_type.value} did not recover ({reason}).",
-                    "error_type": error_type.value,
-                    "reason": reason,
-                    "retries": retries,
-                },
-                session_id=session_id,
-                status=EscalationStatus.PENDING,
-            )
+        exhaust_escalation = PendingEscalation(
+            escalation_type=EscalationType.CORRECTION_EXHAUST,
+            priority_class=PriorityClass.P1,
+            content={
+                "title": "Correction exhausted",
+                "description": f"Correction for {error_type.value} did not recover ({reason}).",
+                "error_type": error_type.value,
+                "reason": reason,
+                "retries": retries,
+            },
+            session_id=session_id,
+            status=EscalationStatus.PENDING,
         )
+        db.add(exhaust_escalation)
+        await db.flush()
 
         # Preserve session_state snapshot (so the parent's work isn't lost).
         l1 = await rebuild_l1(session_id, db)
@@ -214,13 +214,20 @@ class CorrectionLoop:
         loop_run.notes = f"correction_exhaust: {reason}"
         await db.flush()
 
-        # trigger escalation_loop — DEFERRED to the Escalation Loop build
-        # (next entry). The correction_exhaust escalation is already queued
-        # above; this is the handoff point, logged rather than faked.
-        logger.info(
-            "correction_loop: escalated (%s); correction_exhaust queued for the Escalation Loop",
-            reason,
-        )
+        # STEP 6: trigger escalation_loop (auto-drain wiring). Hand the
+        # queued correction_exhaust row to the Escalation Loop, which
+        # classifies -> scores -> formats -> surfaces it, carrying the
+        # accurate retries count through (the EC-31 cross-loop seam). Guarded
+        # so an escalation failure never breaks the correction's own terminal
+        # outcome.
+        try:
+            from aether.loops.escalation_loop import EscalationLoop
+
+            await EscalationLoop().run_for_pending(exhaust_escalation.id, session_id, db)
+        except Exception:  # pragma: no cover - defensive; escalation is best-effort here
+            logger.exception("correction_loop: escalation auto-drain failed (non-blocking)")
+        else:
+            logger.info("correction_loop: escalated (%s) and drained to the Escalation Loop", reason)
         return CorrectionOutcome(
             correction_loop_run_id=loop_run.id, status="escalated",
             recovered=False, retries=retries, escalated=True, reason=reason,
