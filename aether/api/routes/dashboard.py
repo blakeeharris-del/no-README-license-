@@ -52,6 +52,8 @@ from aether.schemas.dashboard import (
     PillarTile,
     Today,
     TodayItem,
+    TrustEvidenceView,
+    TrustSignal,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -206,7 +208,24 @@ async def build_dashboard(db: AsyncSession) -> Dashboard:
             )
         ).scalar_one()
         mem_rows.append(MemoryRow(description=n.title, entities=int(ents)))
-    memory = Memory(rows=mem_rows)
+
+    # Read-only trust-maturity evidence (Foundation §16 dashboard content;
+    # surfaces surface_advancement_evidence for the NEXT ladder step). It
+    # advances nothing — no /advance endpoint (Phase 3).
+    from aether.memory.trust_state import _LADDER, current_trust_stage, surface_advancement_evidence
+
+    stage = await current_trust_stage(db)
+    next_stage = _LADDER.get(stage)
+    if next_stage is not None:
+        ev = await surface_advancement_evidence(next_stage, db)
+        trust_evidence = TrustEvidenceView(
+            current_stage=stage, next_stage=next_stage, ready=ev.met,
+            signals=[TrustSignal(name=s.name, value=s.value, threshold=s.threshold, met=s.met)
+                     for s in ev.signals],
+        )
+    else:
+        trust_evidence = TrustEvidenceView(current_stage=stage, next_stage=None, ready=False)
+    memory = Memory(rows=mem_rows, trust_evidence=trust_evidence)
 
     return Dashboard(
         header=header,
@@ -329,6 +348,26 @@ def render_dashboard_html(dash: Dashboard) -> str:
         for m in dash.memory.rows
     ) or '<div class="row">No recent memory.</div>'
 
+    # Read-only trust-maturity evidence block (within the Memory zone).
+    te = dash.memory.trust_evidence
+    trust_block = ""
+    if te is not None:
+        if te.next_stage:
+            status_cls = "attention" if te.ready else "on_track"
+            sigs = "".join(
+                f'<div class="row {"on_track" if s.met else ""}">{_dot(DashboardStatus.ON_TRACK if s.met else DashboardStatus.SCHEDULED)} '
+                f'{_esc(s.name)} <span class="label">{s.value}/{s.threshold}</span></div>'
+                for s in te.signals
+            )
+            head = (f'Trust maturity: {_esc(te.current_stage)} '
+                    f'→ {_esc(te.next_stage)} — '
+                    f'{"evidence met (awaiting sign-off)" if te.ready else "evidence not yet met"}')
+            trust_block = (f'<div class="row {status_cls}"><b>{head}</b></div>{sigs}'
+                           f'<div class="row"><span class="label">{_esc(te.note)}</span></div>')
+        else:
+            trust_block = (f'<div class="row"><b>Trust maturity: {_esc(te.current_stage)} '
+                           f'(ladder ceiling)</b></div>')
+
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -347,7 +386,7 @@ def render_dashboard_html(dash: Dashboard) -> str:
   <div class="col center">
     <div class="panel" id="pillars" data-zone="pillars"><div class="label">Pillars</div>{tiles}</div>
     <div class="panel" data-zone="memory"><div class="label">Memory &amp; Evidence</div>
-      <input id="memory-search" type="search" placeholder="Ask the Memory Layer" />{mem_rows}</div>
+      <input id="memory-search" type="search" placeholder="Ask the Memory Layer" />{trust_block}{mem_rows}</div>
   </div>
   <div class="col" data-zone="approvals"><div class="label">Approvals</div>{approvals}</div>
 </div>

@@ -133,9 +133,32 @@ class MemoryRow(BaseModel):
     entities: int = 0              # "Entities: N" where relevant
 
 
+class TrustSignal(BaseModel):
+    name: str
+    value: int
+    threshold: int
+    met: bool
+
+
+class TrustEvidenceView(BaseModel):
+    """Read-only trust-maturity evidence surfaced in the Memory & Evidence
+    zone (Foundation §16 lists "trust maturity status" among the dashboard's
+    contents; this is its evidence surface). READ-ONLY — it advances
+    nothing; advancement requires Blake's explicit sign-off
+    (execute_trust_advance), and there is no /advance endpoint (deferred to
+    Phase 3). Fits the existing zone as an evidence item; adds no zone."""
+
+    current_stage: str
+    next_stage: str | None = None
+    ready: bool = False            # evidence met for the next advance
+    signals: list[TrustSignal] = Field(default_factory=list)
+    note: str = "Read-only — advancement requires Blake's explicit sign-off."
+
+
 class Memory(BaseModel):
     rows: list[MemoryRow] = Field(default_factory=list)
     search_enabled: bool = True    # the only search surface in the dashboard
+    trust_evidence: TrustEvidenceView | None = None
 
 
 # --- Zone 6: File Drop Zone (6.7) ------------------------------------------

@@ -326,11 +326,77 @@ renewal); "repeated approvals create no standing authority"; and the
 grant guards (empty source / non-reversible rejected in code AND by DB
 CHECK).
 
-## Open seams (from the consolidation checkpoint — not yet wired)
+## EC-37 / EC-39 — satisfied by honest simulation, re-confirm on real evidence at G3
+
+Both are time/scale-dependent. Per the approved method rulings, each is
+**satisfied by an honest simulation now (Phase 2), to be re-confirmed on
+real elapsed evidence at G3** — the SAME mechanism runs unchanged on real
+accumulated data (the hybrid re-confirmation path).
+
+- **EC-37** (`test_ec37_meta_scorecards`): three separate `MetaLoop.run()`
+  calls over three distinct non-overlapping backdated windows, each seeded
+  with different sessions/loop-mixes/volumes (3/5/4 runs) — not one
+  scorecard relabeled. Mechanism addition: `window_end` on
+  `check_loop_health` (window `[window_end-lookback, window_end]`, default
+  `now` → existing behavior unchanged). "No degradation" proven **both
+  ways**: no CRITICAL anomaly in any cycle AND the key rates
+  (forced_termination/safety/correction) don't worsen window-over-window.
+  **Re-confirm at G3:** three real weekly runs with `window_end` defaulting
+  to `now`.
+- **EC-39** (`test_ec39_invariant_sweep`): 30 sessions of genuinely varied
+  activity — 30 distinct (pillar, loop-trigger) pairs, mixed actions and
+  confidences (stronger than EC-26's homogeneous precedent). INV-01–INV-10
+  each checked by a **real** query/constraint/enforcement signal, scoped to
+  the 30 swept ids (ambient-safe). Structural detectors justified as
+  faithful: INV-04 = derives_from→speculative; INV-07 = contradicts link
+  lacking the enforcer's "Contradiction detected" escalation; INV-09 =
+  closed session still owning a RUNNING loop / spawned sub-agent. **Two
+  detector bugs found and fixed while building** (a proxy would have passed
+  falsely): INV-07 wrong escalation type; INV-10 substring-matched the
+  gateway docstring → switched to AST. **Re-confirm at G3:** point the same
+  detectors at the most recent 30 real sessions.
+- ⚠️ **EC-14 has no preserved test (flagged for G3):** the Phase-0
+  100-session stress harness that found the watchdog bug (HANDOFF.md) was a
+  verification-time run, not committed. EC-39's committed sweep is the
+  standing precedent going forward; if a 100-session real-data stress is
+  wanted at G3, it must be (re)built, not inherited.
+
+## Seams wired (Phase 2) and deferred (Phase 3)
+
+**Wired this phase:**
+- **`/close` → Shutdown STEP 1–2** — `close_session` calls
+  `ShutdownLoop.terminate_active_tree` after the goal loop completes, so
+  nested sub-loops/sub_agent_runs are terminated at close (INV-09 orphan
+  gap closed). Verified via the real `/close` endpoint.
+- **Correction STEP 6 → Escalation auto-drain** — Correction calls
+  `EscalationLoop.run_for_pending` on the correction_exhaust row (accurate
+  retries flow through; the EC-31 seam), replacing the manual handoff.
+
+**Deferred to Phase 3 (with rationale):**
+- **Trust-advance API endpoint (EC-35)** — the advance functions exist and
+  are tested, but no `/advance` endpoint is exposed. Rationale: at T3 the
+  gateway still returns `mock_executed` (no real external action until
+  Phase 3), so an endpoint unlocks nothing operationally yet. A **read-only
+  trust-evidence view** is added to the Dashboard Memory zone this phase
+  (surfaces `surface_advancement_evidence`; advances nothing) — no new
+  zone, no Section-7 exclusion violated.
+- **Goal §16.1 STEP 6 → Correction hook** — NOT wired (per ruling). Wiring
+  entangles the validated goal-loop/`MasterAgent` path; deferred to Phase 3.
+
+## Schema / DATA_SCHEMA regeneration debt
+
+Phase 2 added two application tables — **`decision_journal` (16th, EC-38)**
+and **`standing_authorities` (17th, EC-36)** — plus `action_log` CHECK
+`ck_action_log_trust_marker_sourced` (0007). **DATA_SCHEMA_v2.0.md must be
+regenerated** (was 15 tables) at close-out. The Unit-D trust-evidence view
+adds no table.
+
+## Open seams (superseded above; retained for history)
 
 - `/close` performs §16.6 STEP 3–5 but not STEP 1–2 (Shutdown Loop not
-  yet invoked by session close).
+  yet invoked by session close). *(WIRED — see "Seams wired" above.)*
 - Goal Loop's §16.1 STEP 6 correction hook not wired to the Correction Loop.
+  *(Deferred to Phase 3 — see above.)*
 - Correction STEP 6 "trigger escalation_loop" is a queue handoff, not a call.
 - Sub-loops (correction/escalation/safety/shutdown) don't re-check
   `LoopWatchdog.is_healthy()` (enforced at GoalLoop entry).

@@ -174,6 +174,25 @@ async def test_ec33_exclusions_absent_in_rendered_view(db_session, test_session_
 
 
 @pytest.mark.asyncio
+async def test_trust_evidence_is_read_only_in_memory_zone(db_session):
+    """The trust-maturity evidence surfaces in the Memory zone (no new zone)
+    and is READ-ONLY — loading the dashboard advances nothing."""
+    from aether.memory.trust_state import current_trust_stage
+
+    before = await current_trust_stage(db_session)
+    dash = await build_dashboard(db_session)
+
+    te = dash.memory.trust_evidence
+    assert te is not None
+    assert te.current_stage == before                 # reflects the live stage
+    assert te.signals                                  # real evidence signals present
+    # Loading the dashboard did not advance the stage.
+    assert await current_trust_stage(db_session) == before
+    # It renders inside the existing Memory zone — no seventh zone added.
+    assert Dashboard.ZONES == ("input_bar", "today", "pillars", "approvals", "memory", "files")
+
+
+@pytest.mark.asyncio
 async def test_user_content_is_html_escaped(db_session, test_session_row):
     """Bug fixed: node titles are user content and must be escaped when
     rendered — otherwise a title like '<input>' or '<script>' injects
