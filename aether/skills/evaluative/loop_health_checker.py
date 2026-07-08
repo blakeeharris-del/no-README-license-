@@ -28,15 +28,32 @@ logger = logging.getLogger("aether.skills.evaluative.loop_health_checker")
 
 async def check_loop_health(inputs: dict, db) -> dict:
     """
-    inputs: ``{"lookback_days": int (default 7)}``.
+    inputs: ``{"lookback_days": int (default 7), "window_end": datetime|ISO
+    str|None}``. The window is ``[window_end - lookback_days, window_end]``.
+
+    ``window_end`` defaults to ``now`` — with that default the window is the
+    original single sliding window ``[now - lookback_days, now]`` and the
+    upper bound ``start_time <= now`` is a no-op (loops never start in the
+    future), so existing behavior is unchanged. An explicit ``window_end``
+    (EC-37) isolates a distinct past window without touching the default
+    path — the SAME mechanism serves the honest simulation (backdated
+    windows) and real weekly runs at G3 (default ``now``).
+
     Returns ``{"scorecard": {<loop_type>: {...}}, "anomalies": [...],
     "improvement_signals": [str]}``.
     """
     lookback_days = int(inputs.get("lookback_days") or 7)
-    since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    window_end = inputs.get("window_end")
+    if window_end is None:
+        window_end = datetime.now(timezone.utc)
+    elif isinstance(window_end, str):
+        window_end = datetime.fromisoformat(window_end)
+    if window_end.tzinfo is None:
+        window_end = window_end.replace(tzinfo=timezone.utc)
+    since = window_end - timedelta(days=lookback_days)
 
     runs = list((await db.execute(
-        select(LoopRun).where(LoopRun.start_time >= since)
+        select(LoopRun).where(LoopRun.start_time >= since, LoopRun.start_time <= window_end)
     )).scalars().all())
 
     scorecard: dict[str, dict] = {}

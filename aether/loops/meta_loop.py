@@ -32,22 +32,31 @@ logger = logging.getLogger("aether.loops.meta_loop")
 
 class MetaLoop:
     async def run(
-        self, db: AsyncSession, *, lookback_days: int = 7, triggered_by: str = "manual"
+        self, db: AsyncSession, *, lookback_days: int = 7, triggered_by: str = "manual",
+        window_end: datetime | None = None,
     ) -> MetaLoopRun:
         # Loop-runs half of the scorecard (called directly — a system loop,
-        # not a session-scoped skill invocation).
-        health = await check_loop_health({"lookback_days": lookback_days}, db)
+        # not a session-scoped skill invocation). ``window_end`` (EC-37)
+        # defaults to now, preserving the single-sliding-window behavior.
+        health = await check_loop_health(
+            {"lookback_days": lookback_days, "window_end": window_end}, db
+        )
         scorecard = health["scorecard"]
         anomalies = list(health["anomalies"])
         improvement_signals = list(health["improvement_signals"])
 
-        # skill_performance half: fold in any below-threshold skills.
-        since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        # skill_performance half: fold in any below-threshold skills within
+        # the SAME window as the loop-health half.
+        w_end = window_end or datetime.now(timezone.utc)
+        if w_end.tzinfo is None:
+            w_end = w_end.replace(tzinfo=timezone.utc)
+        since = w_end - timedelta(days=lookback_days)
         flagged = (
             await db.execute(
                 select(SkillPerformance).where(
                     SkillPerformance.below_threshold.is_(True),
                     SkillPerformance.computed_at >= since,
+                    SkillPerformance.computed_at <= w_end,
                 )
             )
         ).scalars().all()
